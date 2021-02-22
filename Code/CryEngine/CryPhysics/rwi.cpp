@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved. 
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -167,10 +167,8 @@ struct entity_grid_checker {
 		}
 		//fetch some memory references to avoid reloads
 		primitives::grid& RESTRICT_REFERENCE entgrid = *pgrid;
-		const Vec3 entgrid_origin			= entgrid.origin;
 		const int icellX = icell.x, icellY = icell.y;
 		const Vec2 entgrid_step	= entgrid.step;
-		const Vec2 entgrid_stepr	= entgrid.stepr;
 		pe_entgrid pEntGrid = pgrid->cells;
 		pe_gridthunk *const __restrict pgthunks = pWorld->m_gthunks;
 		const int gridIdx = entgrid.getcell_safe(icellX,icellY);
@@ -185,6 +183,7 @@ struct entity_grid_checker {
 
 		for(; ithunk; pthunk=pgthunks+(ithunk=ithunk_next)) {
       const pe_gridthunk& thunk = *pthunk;
+			coord_block *coords;
       
 			ithunk_next = thunk.inext;
 			ithunk_prev = ithunk;
@@ -217,7 +216,8 @@ struct entity_grid_checker {
 					if (nEnts>=szList)
 						szList = pWorld->ReallocTmpEntList(pTmpEntList,iCaller,szList+1024); 
 					nEntsChecked++;	
-					CPhysicalEntity *pent,*pentLog,*pentFlags,*pentList;
+					CPhysicalEntity *pent,*pentFlags,*pentList;
+					IPhysicalEntity *pentLog;
 					bCallbackUsed=bRecheckOtherParts = 0;
 
 					if (thunk.pent->m_iSimClass==5) {
@@ -235,7 +235,7 @@ struct entity_grid_checker {
 							pcontacts->id[0] = pWorld_m_matWater;
 							pcontacts->iNode[0] = -1;
 							pentList = pent = (CPhysicalEntity*)(pGridEnt = thunk.pent);
-							i=0; j=1; nParts=0; pentLog=0; goto gotcontacts;
+							i=0; j=1; nParts=0; pentLog=pPhysArea; goto gotcontacts;
 						}
 						continue;
 					}
@@ -243,7 +243,7 @@ struct entity_grid_checker {
 					//This is causing a load hit store on the branch two lines down. Safe to remove? Suspect not due to GetEntity() doing phys on demand and causing a reposition
 					//	call that could set m_bGridThunksChanged. Damn. Could it be set earlier...?
 					pWorld->m_bGridThunksChanged = 0;	
-					pentList = pentLog = pentFlags = pent = (pGridEnt=thunk.pent)->GetEntity();
+					pentLog = pentList = pentFlags = pent = (pGridEnt=thunk.pent)->GetEntity();
 					if (pWorld->m_bGridThunksChanged) 
 						ithunk_next=pEntGrid[gridIdx], ithunk_prev=0;
 					pWorld->m_bGridThunksChanged = 0;
@@ -265,18 +265,24 @@ struct entity_grid_checker {
 							ipartSubst = -2-pGridEnt->m_id; ipartMask = -1;	nParts = 1;
 						pentList = (CPhysicalEntity*)pGridEnt;
 					}
+					coords = objtypes & ent_use_sync_coords ? pent->m_pSyncCoords : (coord_block*)&pent->m_pos;
 
 					for(i=ipartSubst; i<nParts+(ipartSubst+1-nParts & ipartMask); i++) {
 						if ((pent->m_parts[i].flags & flagsColliderAll)==flagsColliderAll && (pent->m_parts[i].flags & flagsColliderAny)) {
 							if (nParts>1) {
-								bbox.center = (pent->m_parts[i].BBox[0]+pent->m_parts[i].BBox[1])*0.5f;
+								bbox.center = (pent->m_parts[i].BBox[0]+pent->m_parts[i].BBox[1])*0.5f - aray.m_ray.origin;
 								bbox.size = (pent->m_parts[i].BBox[1]-pent->m_parts[i].BBox[0])*0.5f;
-								if (!box_ray_overlap_check(&bbox,&aray.m_ray))
+								ray rayloc; rayloc.origin.zero(); rayloc.dir=aray.m_ray.dir;
+								if (objtypes & ent_use_sync_coords && pent->m_pSyncCoords!=(coord_block*)&pent->m_pos) {
+									QuatT diff = QuatT(pent->m_qrot,pent->m_pos) * QuatT(pent->m_pSyncCoords->q,pent->m_pSyncCoords->pos).GetInverted();
+									rayloc.origin = diff.t;
+									rayloc.dir = diff.q*rayloc.dir;
+								}
+								if (!box_ray_overlap_check(&bbox,&rayloc))
 									continue;
 							}
-							gwd.offset = pent->m_pos + pent->m_qrot*pent->m_parts[i].pos;
-							//(pent->m_qrot*pent->m_parts[i].q).getmatrix(gwd.R);	//Q2M_IVO 
-							gwd.R = Matrix33(pent->m_qrot*pent->m_parts[i].q);
+							gwd.offset = coords->pos + coords->q*pent->m_parts[i].pos;
+							gwd.R = Matrix33(coords->q*pent->m_parts[i].q);
 							gwd.scale = pent->m_parts[i].scale;
 
 							pGeom = PrepGeom(pent->m_parts[i].pPhysGeom->pGeom,iCaller);
@@ -290,7 +296,7 @@ gotcontacts:
 								IPhysicalWorld::SRWIParams rp;
 								pPortals[nPortals] = pent;
 								nPortals = min(nPortals+1,nMaxPortals);
-								rp.Init(transGrid*aray.m_ray.origin, transGrid.q*aray.m_ray.dir, objtypes & ~ent_terrain, flags, collclass, 
+								rp.Init(transGrid*aray.m_ray.origin, transGrid.q*aray.m_ray.dir, objtypes & ~ent_terrain, flags & ~rwi_auto_grid_start, collclass, 
 									phits,nMaxHits, (IPhysicalEntity**)&pent->m_pEntBuddy,1, this,FD_RWI_RECURSIVE, nullptr, pPortals+nPortals,nMaxPortals-nPortals);
 								int nhits1 = pWorld->RayWorldIntersection(rp, pNameTag, iCaller);
 								szList = max(szList, pWorld->GetTmpEntList(pTmpEntList, iCaller));
@@ -305,12 +311,14 @@ gotcontacts:
 
 							check_cell_contact(j,pcontacts,phits,flags,pentFlags,nThroughHits,nThroughHitsAux, imat,ilastcell,aray,iSolidNode,pentLog,i,ihit);
 						}	else if (pent->m_parts[i].flags & geom_mat_substitutor) {
-							for(int ihit=!phits[0].pCollider; ihit<=nThroughHits+nThroughHitsAux; ihit++) 
+							for(int idxhit=!phits[0].pCollider; idxhit<=nThroughHits+nThroughHitsAux; idxhit++) {
+								int ihit = idxhit<=nThroughHits ? idxhit : nMaxHits-(idxhit-nThroughHits); // aux hits are stored from nMaxHits-1 downwards
 								if (pent->m_parts[i].flagsCollider & (2<<((CPhysicalPlaceholder*)phits[ihit].pCollider)->m_iSimClass) - (((CPhysicalPlaceholder*)phits[ihit].pCollider)->m_id>>31) &&
 									pent->m_parts[i].pPhysGeom->pGeom->PointInsideStatus(((phits[ihit].pt-pent->m_pos)*pent->m_qrot-pent->m_parts[i].pos)*pent->m_parts[i].q)) 
 								{	phits[ihit].surface_idx = pent->GetMatId(pent->m_parts[i].pPhysGeom->surface_idx, i);
 									phits[ihit].idmatOrg = -1;
 								}
+							}
 							bRecheckOtherParts = -1;
 						}
 					}
@@ -334,21 +342,21 @@ gotcontacts:
 
 	ILINE void check_cell_contact(int& j,geom_contact *&pcontacts, ray_hit *phits, unsigned int flags,
 		CPhysicalEntity *pentFlags,int& nThroughHits, int& nThroughHitsAux, int& imat, int &ilastcell,CRayGeom& aray,
-		int& iSolidNode, CPhysicalEntity *pentLog,int i, int& ihit)
+		int& iSolidNode, IPhysicalEntity *pentLog,int i, int& ihit)
 	{ 
 		primitives::grid& RESTRICT_REFERENCE entgrid = *pgrid;
-		const Vec3 entgrid_origin	= entgrid.origin;
-		const Vec2 entgrid_stepr	= entgrid.stepr;
+		const Vec2 entgrid_stepr = entgrid.stepr;
 		
 		float facing;
 		for(j--; j>=0; j--) 
 		if (pcontacts[j].t<phits[0].dist && (flags & rwi_ignore_back_faces)*(facing=pcontacts[j].n*aray.m_dirn)<=0) {
 			imat = pentFlags->GetMatId(pcontacts[j].id[0],i);
+			int rayPierceability = (int)((flags & rwi_pierceability_mask)-(flags & rwi_max_piercing));
 			int pierceability = pWorld->m_SurfaceFlagsTable[imat&NSURFACETYPES-1] & sf_pierceable_mask;
 			ihit = -(int)(flags&rwi_force_pierceable_noncoll)>>31 & -iszero((int)pentFlags->m_parts[i].flags & (geom_colltype_solid|geom_colltype_ray));
 			pierceability += sf_max_pierceable+1-pierceability & ihit;
 			ihit = 0;
-			if ((int)(flags & rwi_pierceability_mask) < pierceability) {
+			if (rayPierceability < pierceability) {
 				if ((pWorld->m_SurfaceFlagsTable[imat&NSURFACETYPES-1]|flags) & sf_important) {
 					for(ihit=1; ihit<=nThroughHits && phits[ihit].dist<pcontacts[j].t; ihit++);
 					if (ihit<=nThroughHits)	{
@@ -369,6 +377,10 @@ gotcontacts:
 					} else if (nThroughHits+nThroughHitsAux>=nMaxHits-1)
 						continue;
 					nThroughHitsAux = min(nThroughHitsAux+1, nMaxHits-1-nThroughHits);
+				}
+				if (nThroughHits+1==nMaxHits && flags & rwi_max_piercing)	{	// don't look after the last important pierceble hit's cell
+					Vec3 gpt = pgrid->vecToGrid(phits[nThroughHits].pt-pgrid->origin);
+					ilastcell = float2int(gpt.x*entgrid_stepr.x-0.5f) & 0xFFFF | float2int(gpt.y*entgrid_stepr.y-0.5f)<<16;
 				}
 			} else {
 				if ((flags & rwi_ignore_solid_back_faces)*facing>0)
@@ -449,7 +461,9 @@ void CPhysicalWorld::RayWater(const Vec3 &org,const Vec3 &dir, entity_grid_check
 	}
 
 	if (inrange(t.x, 0.0f,t.y)) {
-		if ((uint)(flags & rwi_pierceability_mask) < (m_SurfaceFlagsTable[m_matWater] & sf_pierceable_mask)+((uint)flags & rwi_force_pierceable_noncoll)) {
+		int rayPierceability = (flags & rwi_pierceability_mask)-(flags & rwi_max_piercing);
+		int surfPierceability = (m_SurfaceFlagsTable[m_matWater] & sf_pierceable_mask)+(flags & rwi_force_pierceable_noncoll);
+		if (rayPierceability < surfPierceability) {
 			if (nMaxHits<=1)
 				goto nowater;
 			if ((m_SurfaceFlagsTable[m_matWater]|(flags^rwi_separate_important_hits)) & sf_important)
@@ -476,10 +490,12 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 	Vec3 dir = rp.dir;
 	int objtypes = rp.objtypes;
 
-	FUNCTION_PROFILER( GetISystem(),PROFILE_PHYSICS );
+	CRY_PROFILE_FUNCTION(PROFILE_PHYSICS );
 
-	IF (rp.dir.len2()<=0, 0)
+	IF (rp.dir.len2()<=0 || rp.flags & rwi_max_piercing && rp.nMaxHits<2, 0)
 		return 0;
+	extern thread_local int tls_isMainThread;
+	m_vars.bMultithreaded |= 1^tls_isMainThread;
 
 	IF (rp.flags & rwi_queue, 0) {
 		WriteLock lockQ(m_lockRwiQueue);
@@ -515,9 +531,10 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 			m_rwiQueue[m_rwiQueueHead].iCaller |= 1<<16;
 		}
 		m_rwiQueue[m_rwiQueueHead].nMaxHits = rp.nMaxHits;
-		m_rwiQueue[m_rwiQueueHead].nSkipEnts = min((int)(sizeof(m_rwiQueue[0].idSkipEnts)/sizeof(m_rwiQueue[0].idSkipEnts[0])),rp.nSkipEnts);
+		m_rwiQueue[m_rwiQueueHead].nSkipEnts = rp.nSkipEnts;
+		int *idSkipEnts = rp.nSkipEnts>CRY_ARRAY_COUNT(m_rwiQueue[0].idSkipEnts) ? (int*)(m_rwiQueue[m_rwiQueueHead].pSkipEnts = new IPhysicalEntity*[rp.nSkipEnts]) : m_rwiQueue[m_rwiQueueHead].idSkipEnts;
 		for(i=0;i<m_rwiQueue[m_rwiQueueHead].nSkipEnts;i++)
-			m_rwiQueue[m_rwiQueueHead].idSkipEnts[i] = rp.pSkipEnts[i] ? GetPhysicalEntityId(rp.pSkipEnts[i]):-3;
+			idSkipEnts[i] = rp.pSkipEnts[i] ? GetPhysicalEntityId(rp.pSkipEnts[i]):-3;
 		m_rwiQueueSz++;
 		return 1;
 	} 
@@ -534,8 +551,10 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 		inodeLastHit = rp.phitLast->iNode;
 	}
 
-	assert(iCaller<=MAX_PHYS_THREADS);
-	WriteLockCond lock(m_lockCaller[iCaller], iCaller==MAX_PHYS_THREADS && rp.iForeignData!=FD_RWI_RECURSIVE);
+	assert(iCaller<MAX_TOT_THREADS);
+	if (iCaller==MAX_PHYS_THREADS && rp.iForeignData!=FD_RWI_RECURSIVE)
+		iCaller += alloc_extCaller();
+	WriteLockCond lock(m_lockCaller[iCaller], iCaller>=MAX_PHYS_THREADS && rp.iForeignData!=FD_RWI_RECURSIVE);
 
 	if (rp.iForeignData==FD_RWI_RECURSIVE) {
 		egc.nEnts = ((entity_grid_checker*)rp.pForeignData)->nEnts;
@@ -555,15 +574,21 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 		egc.pPortals = rp.pPortals;	egc.nMaxPortals = rp.nMaxPortals;
 	}
 	egc.nPortals = 0;
-	if ((objtypes & ent_terrain) && m_pHeightfield[iCaller]) {
-    RayHeightfield(rp.org,dir,rp.hits,rp.flags,iCaller);
-  }
+	if ((objtypes & ent_terrain) && m_pHeightfield[iCaller]) 
+		if (!(rp.flags & rwi_max_piercing))
+			RayHeightfield(rp.org,dir,rp.hits,rp.flags,iCaller);
+		else {
+			Vec3 dir1 = dir; // prevent dir from being modified by RayHeightfield
+			RayHeightfield(rp.org,dir1,rp.hits+1,rp.flags,iCaller);
+			egc.nThroughHits += rp.hits[1].bTerrain;
+		}
 	egc.aray.CreateRay(rp.org,dir);
 
 	IF (objtypes & m_bCheckWaterHits & ent_water, 0) {
 		RayWater(rp.org,dir,egc,rp.flags,rp.nMaxHits,rp.hits);
 		objtypes |= ent_areas;
 	}
+	QuatT hitTrans(IDENTITY);
 
 	IF (objtypes & ~(ent_terrain|ent_water) && m_gthunks, 1) {
 		MarkSkipEnts(rp.pSkipEnts,rp.nSkipEnts,1<<iCaller);
@@ -573,6 +598,25 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 		egc.pgrid = &m_entgrid;
 		for(i=0;i<rp.nSkipEnts;i++) if (rp.pSkipEnts[i] && (egc.pgrid=GetGrid(rp.pSkipEnts[i]))!=&m_entgrid)
 			break;
+		if (rp.flags & rwi_auto_grid_start) {
+			SEntityGrid *pgridLowest=nullptr;
+			int maxDepth=-1,depth;
+			for(SEntityGrid *pgrid=m_entgrid.m_next; pgrid; pgrid=pgrid->m_next)
+				if (PtInAABB(pgrid->m_BBox, pgrid->m_transW.GetInverted()*(egc.pgrid->m_transW*rp.org))) {
+					for(SEntityGrid *pgrid1=pgrid+(depth=0); pgrid1->m_host; pgrid1=GetGrid(pgrid1->m_host),depth++);
+					if (depth>maxDepth) {
+						pgridLowest=pgrid; maxDepth=depth;
+					}
+				}
+			if (pgridLowest) {
+				QuatT dtrans = pgridLowest->m_transW.GetInverted()*egc.pgrid->m_transW;
+				hitTrans = dtrans.GetInverted();
+				egc.aray.m_ray.origin = dtrans*rp.org; 
+				egc.aray.m_ray.dir = dir = dtrans.q*dir;
+				egc.aray.m_dirn = dtrans.q*egc.aray.m_dirn;
+				egc.pgrid = pgridLowest;
+			}
+		}
 		egc.objtypes = objtypes;
 		egc.flags = rp.flags^rwi_separate_important_hits;
 		if (!(egc.flagsColliderAll = rp.flags>>rwi_colltype_bit))
@@ -596,7 +640,7 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 		egc.iCaller = iCaller;
 		m_prevGEAobjtypes[iCaller] = -1;
 
-		Vec3 origin_grid = egc.pgrid->vecToGrid(rp.org-egc.pgrid->origin), dir_grid = egc.pgrid->vecToGrid(dir);
+		Vec3 origin_grid = egc.pgrid->vecToGrid(egc.aray.m_ray.origin-egc.pgrid->origin), dir_grid = egc.pgrid->vecToGrid(dir);
 		egc.org2d.set(0.5f-origin_grid.x*egc.pgrid->stepr.x, 0.5f-origin_grid.y*egc.pgrid->stepr.y);
 		egc.dir2d.set(dir_grid.x*egc.pgrid->stepr.x, dir_grid.y*egc.pgrid->stepr.y);
 		egc.dir2d_len = len(egc.dir2d);
@@ -666,7 +710,7 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 	nHits = 0;
 	if (hits[0].dist>1E9f) {
 		hits[0].dist = -1;
-		hits[0].pt = rp.org+dir;
+		hits[0].pt = egc.aray.m_ray.origin+dir;
 	} else {
 		CPhysicalEntity *pent = (CPhysicalEntity*)hits[0].pCollider;
 		if (pent && pent->m_iSimClass!=5 && hits[0].ipart<pent->m_nParts) {
@@ -678,6 +722,8 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 			inodeLastHit = egc.iSolidNode;
 		} else
 			hits[0].foreignIdx=hits[0].partid = -1;
+		hits[0].pt = hitTrans*hits[0].pt;
+		hits[0].n = hitTrans.q*hits[0].n;
 		nHits++;
 	}
 	if (m_vars.iDrawHelpers & 64 && m_pRenderer) {
@@ -686,7 +732,7 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 		nTicks = CryGetTicks()-func_profiler.m_iStartTime;
 #endif
 		int bQueued = iszero(m_lockTPR>>16^1 | iCaller);
-		m_pRenderer->DrawLine(rp.org,hits[0].pt,8-bQueued,1|nTicks*2);
+		m_pRenderer->DrawLine(egc.aray.m_ray.origin,hits[0].pt,8-bQueued,1|nTicks*2);
 	}
 	for(i=1;i<rp.nMaxHits;i++) {
 		if (hits[i].dist>1E9f || hits[0].dist>0 && hits[i].dist>hits[0].dist)
@@ -699,6 +745,8 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 				hits[i].partid = pent->m_parts[hits[i].ipart].id;
 			} else
 				hits[i].foreignIdx=hits[i].partid = -1;
+			hits[i].pt = hitTrans*hits[i].pt;
+			hits[i].n = hitTrans.q*hits[i].n;
 			hits[i].bTerrain=0; nHits++; 
 		}
 	}
@@ -715,7 +763,7 @@ int CPhysicalWorld::RayWorldIntersection(const IPhysicalWorld::SRWIParams &rp, c
 int CPhysicalWorld::TracePendingRays(int bDoTracing)
 {	
 	int i,nChex=0;
-	IPhysicalEntity* pSkipEnts[8] = { NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
+	IPhysicalEntity* *pSkipEnts, *skipEntsBuf[8] = {};
 	int iCaller = get_iCaller();
 	WriteLock lockg(m_lockTPR);
 
@@ -737,10 +785,14 @@ int CPhysicalWorld::TracePendingRays(int bDoTracing)
 			}
 			eprr.pForeignData = curreq.pForeignData;
 			eprr.iForeignData = curreq.iForeignData;
-			for(i=0; i<curreq.nSkipEnts; i++)
-				pSkipEnts[i] = GetPhysicalEntityById(curreq.idSkipEnts[i]);
+			pSkipEnts = skipEntsBuf;
+			int *idSkipEnts = curreq.nSkipEnts>CRY_ARRAY_COUNT(curreq.idSkipEnts) ? (int*)(pSkipEnts=curreq.pSkipEnts) : curreq.idSkipEnts;
+			for(i=curreq.nSkipEnts-1; i>=0; i--)
+				pSkipEnts[i] = GetPhysicalEntityById(idSkipEnts[i]);
 			curreq.pSkipEnts = pSkipEnts;
 			eprr.nHits = bDoTracing ? RayWorldIntersection(curreq, "RayWorldIntersection(Queued)", iCaller) : 0;
+			if (pSkipEnts!=skipEntsBuf)
+				delete[] pSkipEnts;
 			eprr.bHitsFromPool = curreq.iCaller>>16;
 			eprr.nMaxHits = curreq.nMaxHits;
 			eprr.pHits = curreq.hits;
@@ -764,8 +816,10 @@ int CPhysicalWorld::TracePendingRays(int bDoTracing)
 			}
 			eppr.pForeignData = curreq.pForeignData;
 			eppr.iForeignData = curreq.iForeignData;
+			pSkipEnts = skipEntsBuf;
+			int *idSkipEnts = curreq.nSkipEnts>CRY_ARRAY_COUNT(curreq.idSkipEnts) ? (int*)(pSkipEnts=curreq.pSkipEnts) : curreq.idSkipEnts;
 			for(i=0; i<curreq.nSkipEnts; i++)
-				pSkipEnts[i] = GetPhysicalEntityById(curreq.idSkipEnts[i]);
+				pSkipEnts[i] = GetPhysicalEntityById(idSkipEnts[i]);
 			eppr.OnEvent = curreq.OnEvent;
 			curreq.pprim = (primitive*)curreq.primbuf;
 			curreq.pSkipEnts = pSkipEnts;
@@ -778,6 +832,8 @@ int CPhysicalWorld::TracePendingRays(int bDoTracing)
 				if (!(eppr.pEntity = GetPhysicalEntityById(pcontact->iPrim[0])))
 					eppr.pEntity = &g_StaticPhysicalEntity;
 			}
+			if (pSkipEnts!=skipEntsBuf)
+				delete[] pSkipEnts;
 			OnEvent(0,&eppr);
 		} while(true);
 	}

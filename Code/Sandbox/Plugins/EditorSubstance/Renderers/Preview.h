@@ -1,3 +1,5 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 
 #include "Base.h"
@@ -25,18 +27,13 @@ typedef std::unordered_map<SubstanceAir::UInt, PreviewOutputDataMap> PresetPrevi
 
 class CPreviewRenderer : public CInstanceRenderer
 {
-
 public:
-
-	CPreviewRenderer();
-
 	virtual void FillVirtualOutputRenderData(const ISubstancePreset* preset, const SSubstanceOutput& output, std::vector<SSubstanceRenderData>& renderData) override;
 	virtual void FillOriginalOutputRenderData(const ISubstancePreset* preset, SSubstanceOutput& output, std::vector<SSubstanceRenderData>& renderData) override;
 	virtual void ProcessComputedOutputs() override;
 	virtual bool SupportsOriginalOutputs() { return true; }
 	virtual void RemovePresetRenderData(ISubstancePreset* preset) override;
 	CCrySignal <void(SubstanceAir::RenderResult* result, SPreviewGeneratedOutputData* data)> outputComputed;
-protected:
 
 private:
 	void ProcessOutput(const ISubstancePreset* preset, const SSubstanceOutput& output, std::vector<SSubstanceRenderData>& renderData, bool isVirtual);
@@ -47,7 +44,3 @@ private:
 
 } // END namespace Renderers
 } // END namespace EditorSubstance
-
-
-
-

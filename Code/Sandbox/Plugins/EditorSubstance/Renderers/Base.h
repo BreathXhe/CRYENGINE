@@ -1,3 +1,5 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 
 #include "ISubstanceInstanceRenderer.h"
@@ -6,7 +8,7 @@
 namespace SubstanceAir
 {
 	class GraphInstance;
-	class OutputInstanceBase;
+	class OutputInstance;
 }
 
 
@@ -15,18 +17,17 @@ namespace EditorSubstance
 namespace Renderers
 {
 
-typedef std::unordered_set<SubstanceAir::OutputInstanceBase*> OutputsSet;
+typedef std::unordered_set<SubstanceAir::OutputInstance*> OutputsSet;
 
 class CInstanceRenderer : public ISubstanceInstanceRenderer
 {
 public:
-	CInstanceRenderer();
 	virtual void OnOutputAvailable(SubstanceAir::UInt runUid, const SubstanceAir::GraphInstance *graphInstance,
-		SubstanceAir::OutputInstanceBase * outputInstance) override;
+		SubstanceAir::OutputInstance * outputInstance) override;
 
 	virtual void ProcessComputedOutputs() = 0;
 	virtual bool OutputsInQueue();
-	virtual void RemoveItemFromQueue(SubstanceAir::OutputInstanceBase* output);
+	virtual void RemoveItemFromQueue(SubstanceAir::OutputInstance* output);
 	virtual SubstanceAir::InputImage::SPtr GetInputImage(const ISubstancePreset* preset, const string& path) override;
 	virtual void RemovePresetRenderData(ISubstancePreset* preset) = 0;
 protected:
@@ -40,4 +41,3 @@ protected:
 
 } // END namespace Renderers
 } // END namespace EditorSubstance
-

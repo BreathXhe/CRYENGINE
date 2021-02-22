@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "WriteProxies.h"
@@ -8,14 +8,21 @@
 #include <Cry3DEngine/I3DEngine.h>
 #include <Cry3DEngine/IIndexedMesh.h>
 #include <CryPhysics/physinterface.h>
+#include <queue>
 
 void LogPrintf(const char* szFormat, ...);
 
 namespace Private_WriteProxies
 {
 
-static IStatObj* SaveProxies(IStatObj* pStatObj, const SProxyTree* pProxyTree, const SProxyTree::SNode* pProxyTreeNode, int& nProxies, int slotParent = 0)
+static IStatObj* SaveProxies(IStatObj* pStatObj, const SProxyTree* pProxyTree, const SProxyTree::SNode* pProxyTreeNode, int& nProxies)
 {
+	int slotParent = pStatObj->GetSubObjectCount() - 1;
+	while (slotParent >= 0 && pStatObj->GetSubObject(slotParent)->name != pProxyTreeNode->m_name)
+	{
+		slotParent--;
+	}
+
 	for (size_t i = 0; i < pProxyTreeNode->m_physGeometryCount; ++i)
 	{
 		phys_geometry* const pProxyGeom = pProxyTree->m_physGeometries[pProxyTreeNode->m_firstPhysGeometryIndex + i];
@@ -25,7 +32,11 @@ static IStatObj* SaveProxies(IStatObj* pStatObj, const SProxyTree* pProxyTree, c
 			IStatObj* pMeshObj = pStatObj;
 			pStatObj = gEnv->p3DEngine->CreateStatObj();
 			pStatObj->FreeIndexedMesh();
-			pStatObj->AddSubObject(pMeshObj);
+			pStatObj->AddSubObject(pMeshObj).name = pProxyTreeNode->m_name;
+			pStatObj->SetMaterial(pMeshObj->GetMaterial());
+			pStatObj->SetFilePath(pMeshObj->GetFilePath());
+			pMeshObj->SetGeoName(pProxyTreeNode->m_name);
+			slotParent = 0;
 		}
 		IStatObj* pProxObj = gEnv->p3DEngine->CreateStatObj();
 		static CMesh meshDummy;
@@ -35,9 +46,9 @@ static IStatObj* SaveProxies(IStatObj* pStatObj, const SProxyTree* pProxyTree, c
 			meshDummy.SetVertexCount(3);
 			for (int i = 0; i < 3; i++)
 			{
-				meshDummy.m_bbox.Add(meshDummy.m_pPositions[i] = Vec3(1, 0, 0).GetRotated(Vec3(1, 1, 1) * (1 / sqrt3), i * gf_PI * 0.5f));
+				meshDummy.m_bbox.Add(meshDummy.m_pPositions[i] = Vec3(1.0f, 0.0f, 0.0f).GetRotated(Vec3(1.0f, 1.0f, 1.0f) * static_cast<float>(1.0 / sqrt3), i * gf_PI * 0.5f));
 				meshDummy.m_pIndices[i] = i;
-				meshDummy.m_pNorms[i] = SMeshNormal(Vec3(1, 1, 1) * (1 / sqrt3));
+				meshDummy.m_pNorms[i] = SMeshNormal(Vec3(1.0f, 1.0f, 1.0f) * static_cast<float>(1.0 / sqrt3));
 			}
 			meshDummy.m_subsets.resize(1);
 			SMeshSubset& ss = meshDummy.m_subsets[0];
@@ -58,16 +69,10 @@ static IStatObj* SaveProxies(IStatObj* pStatObj, const SProxyTree* pProxyTree, c
 		nProxies++;
 	}
 
-	slotParent = pStatObj->GetSubObjectCount() - 1;
-	while (slotParent >= 0 && pStatObj->GetSubObject(slotParent)->name != pProxyTreeNode->m_name)
-	{
-		slotParent--;
-	}
-
 	for (size_t i = 0; i < pProxyTreeNode->m_childCount; ++i)
 	{
 		const SProxyTree::SNode* const pChildNode = &pProxyTree->m_nodes[pProxyTreeNode->m_firstChildIndex + i];
-		pStatObj = SaveProxies(pStatObj, pProxyTree, pChildNode, nProxies, slotParent);
+		pStatObj = SaveProxies(pStatObj, pProxyTree, pChildNode, nProxies);
 	}
 
 	return pStatObj;

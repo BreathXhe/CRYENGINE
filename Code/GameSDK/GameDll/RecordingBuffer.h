@@ -1,7 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __RECORDINGBUFFER_H__
 #define __RECORDINGBUFFER_H__
+
+#include <CryMemory/MemoryAccess.h>
+#include <CryMemory/CrySizer.h>
 
 class CBufferUtil;
 
@@ -43,7 +46,7 @@ struct SRecording_FrameData : SRecording_Packet
 class CRecordingBuffer
 {
 public:
-	class iterator : public std::iterator<std::forward_iterator_tag, SRecording_Packet>
+	class iterator
 	{
 	public:
 		iterator(CRecordingBuffer* pBuffer, size_t offset) : m_pRecordingBuffer(pBuffer), m_offset(offset)
@@ -104,7 +107,7 @@ public:
 	
 	const uint8* at(size_t offset) const
 	{
-		CRY_ASSERT_MESSAGE(offset < m_usedSize, "Start offset is too large");
+		CRY_ASSERT(offset < m_usedSize, "Start offset is too large");
 		uint8* pStart = m_pStart + offset;
 		if (pStart >= m_pBuffer + m_dynamicBufferSize)
 		{

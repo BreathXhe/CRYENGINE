@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -72,6 +72,8 @@ public:
 
 	// ~Explorer::IExplorerEntryProvider
 
+	void RemoveUnsavedQueries();
+
 signals:
 	void DocumentAboutToBeRemoved(CUqsQueryDocument* pDocument);
 
@@ -79,7 +81,6 @@ private:
 
 	void ActionDeleteQuery(Explorer::ActionContext& x);
 
-	void RemoveAllNeverSavedQueries();
 	void DeleteQueryByEntryId(uint id);
 
 	void UpdateQueryEntryPakState(const Explorer::SEntry<SUqsQueryEntry>& entry);

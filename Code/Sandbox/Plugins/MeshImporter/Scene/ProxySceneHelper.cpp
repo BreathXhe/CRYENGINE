@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ProxySceneHelper.h"
@@ -53,7 +53,9 @@ void AddProxyGenerationContextMenu(QMenu* pMenu, CSceneModelCommon* pSceneModel,
 			CSceneElementCommon* const pSceneElement = pSceneModel->GetSceneElementFromModelIndex(index);
 			CRY_ASSERT(pSceneElement->GetType() == ESceneElementType::SourceNode);
 			CSceneElementPhysProxies* const pPhysProxiesElement = AddPhysProxies((CSceneElementSourceNode*)pSceneElement, pProxyGenerator);
-			pPhysProxiesElement->GetPhysProxies()->params.islandMap = ~proxies;
+			IGeometry::SProxifyParams &params = pPhysProxiesElement->GetPhysProxies()->params;
+			params.islandMap = ~proxies;
+			params.findPrimSurfaces = params.findPrimLines = (pSceneElement->GetParent() ? 1 : 0);
 		});
 	}
 	else if (pSceneElement->GetType() == ESceneElementType::PhysProxy || pSceneElement->GetType() == ESceneElementType::ProxyGeom)

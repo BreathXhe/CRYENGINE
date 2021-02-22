@@ -1,3 +1,5 @@
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 #include "SubstanceManager.h"
 #include "SubstanceCommon.h"
@@ -35,7 +37,7 @@ void CSubstanceManager::CrySubstanceCallbacks::outputComputed(
 		SubstanceAir::UInt runUid,
 		size_t userData,
 		const SubstanceAir::GraphInstance* graphInstance,
-		SubstanceAir::OutputInstanceBase* outputInstance)
+		SubstanceAir::OutputInstance* outputInstance)
 	{
 		ISubstanceInstanceRenderer* renderer = (ISubstanceInstanceRenderer*)userData;
 		if (CSubstanceManager::Instance()->m_renderers.count(std::type_index(typeid(*renderer))))
@@ -50,7 +52,7 @@ void CSubstanceManager::CrySubstanceCallbacks::outputComputed(
 	
 	}
 
-void CSubstanceManager::CrySubstanceCallbacks::outputComputed(SubstanceAir::UInt runUid, const SubstanceAir::GraphInstance* graphInstance, SubstanceAir::OutputInstanceBase* outputInstance)
+void CSubstanceManager::CrySubstanceCallbacks::outputComputed(SubstanceAir::UInt runUid, const SubstanceAir::GraphInstance* graphInstance, SubstanceAir::OutputInstance* outputInstance)
 {
 	outputComputed(runUid, 0, graphInstance, outputInstance);
 }
@@ -131,10 +133,10 @@ bool CSubstanceManager::GetArchiveContents(const string& archiveName, std::map<s
 	if (!package)
 		return false;
 
-	for each (const SubstanceAir::GraphDesc& graph in package->getGraphs())
+	for (const SubstanceAir::GraphDesc& graph : package->getGraphs())
 	{
 		string graphName = graph.mLabel.c_str();
-		for each (SubstanceAir::OutputDesc output in graph.mOutputs)
+		for (SubstanceAir::OutputDesc output : graph.mOutputs)
 		{
 			contents[graphName].push_back(output.mIdentifier.c_str());
 		}
@@ -223,4 +225,3 @@ SubstanceAir::PackageDesc* CSubstanceManager::LoadPackage(const string& archiveN
 	m_loadedPackages.emplace(CCrc32::ComputeLowercase(archiveName), package);
 	return package;
 }
-

@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -66,4 +66,5 @@ private:
 	int m_hitShift;
 	int m_proxyIsland;
 	uint64 m_hitmask;
+	bool m_voxelsShown = false;
 };

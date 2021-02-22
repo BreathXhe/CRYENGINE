@@ -1,4 +1,4 @@
-// Copyright 2001-2017 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2019 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PhysicsProxies.h"
@@ -159,6 +159,11 @@ SPhysProxies* CProxyGenerator::AddPhysProxies(const FbxTool::SNode* pFbxNode, co
 		sprintf(name, "Auto Proxies (%d source mesh%s)", nMeshes, nMeshes == 1 ? "" : "es");
 		pProx->nMeshes = nMeshes;
 		std::vector<char> mats;
+		if (faces.size() > 32766)
+		{
+			CryWarning(VALIDATOR_MODULE_EDITOR, VALIDATOR_WARNING, "Too many source triangles (%d); cropping the number to 32766", faces.size());
+			faces.resize(32766);
+		}
 		mats.resize(faces.size(), 0);
 		pProx->pSrc->pMesh = std::unique_ptr<IGeometry>(gEnv->pPhysicalWorld->GetGeomManager()->CreateMesh(pos.data(), &faces.data()->x, mats.data(), 0, faces.size(), mesh_OBB | mesh_shared_idx));
 		const mesh_data* pmd = (const mesh_data*)pProx->pSrc->pMesh->GetData();
@@ -176,7 +181,6 @@ SPhysProxies* CProxyGenerator::AddPhysProxies(const FbxTool::SNode* pFbxNode, co
 
 phys_geometry* CProxyGenerator::AddProxyGeom(SPhysProxies* pPhysProxies, IGeometry* pProxyGeom, bool replaceIfPresent)
 {
-	int sIdx = -1;
 	const mesh_data* mdOld, * mdNew = (const mesh_data*)pProxyGeom->GetData();
 	IGeomManager* pGeoman = gEnv->pPhysicalWorld->GetGeomManager();
 	phys_geometry* pPhysGeom = pGeoman->RegisterGeometry(pProxyGeom, 0);
@@ -185,7 +189,10 @@ phys_geometry* CProxyGenerator::AddProxyGeom(SPhysProxies* pPhysProxies, IGeomet
 	if (type == GEOM_TRIMESH)
 	{
 		mesh_data* pmd = (mesh_data*)pProxyGeom->GetData();
-		memset(pmd->pMats, 0, pmd->pMats ? pmd->nTris : 0);
+		if (pmd->pMats)
+		{
+			memset(pmd->pMats, 0, pmd->nTris);
+		}
 	}
 	if (replaceIfPresent && pProxyGeom->GetType() == GEOM_TRIMESH)
 	{
@@ -229,6 +236,7 @@ void CProxyGenerator::GenerateProxies(SPhysProxies* pProx, std::vector<phys_geom
 		m_hitShift = 0;
 		signalProxyIslandsChanged(pProx);
 	}
+	m_voxelsShown = false;
 }
 
 void CProxyGenerator::ResetProxies(SPhysProxies* pProx)
@@ -318,7 +326,8 @@ void CProxyGenerator::Render(SPhysProxies* pProx, phys_geometry* pProxyGeom, con
 	{
 		pProx->pSrc->pMesh->DrawWireframe(pPhysRnd, 0, -1, 6);
 	}
-	pdist ? (pdist->Set(dist0), 0) : 0;
+	m_voxelsShown = showParams.bShowVoxels;
+	if (pdist) pdist->Set(dist0);
 	return;
 }
 
@@ -358,14 +367,14 @@ void CProxyGenerator::OnMouse(SPhysProxies* pProx, const SMouseEvent& ev, const 
 {
 	CRY_ASSERT(pProx);
 
-	if ((ev.type == SMouseEvent::PRESS || ev.type == SMouseEvent::MOVE) && pProx)
+	if ((ev.type == SMouseEvent::TYPE_PRESS || ev.type == SMouseEvent::TYPE_MOVE) && pProx)
 	{
 		Vec2 sz(cam.GetViewSurfaceX(), cam.GetViewSurfaceZ());
 		Vec3 dir = Vec3((Vec2(ev.x, ev.y) * 2 - sz) * (tan(cam.GetFov() * 0.5f) / sz.y));
 		dir.z = 1;
 		primitives::ray ray;
 		ray.origin = cam.GetMatrix().GetTranslation();
-		ray.dir = cam.GetMatrix().TransformVector(Quat(1 / sqrt2, Vec3(-1 / sqrt2, 0, 0)) * dir);
+		ray.dir = cam.GetMatrix().TransformVector(Quat(static_cast<float>(1.0 / sqrt2), Vec3(static_cast<float>(-1.0 / sqrt2), 0.0f, 0.0f)) * dir);
 		primitives::box bbox;
 		pProx->pSrc->pMesh->GetBBox(&bbox);
 		Vec3 dirloc = bbox.Basis * ray.dir;
@@ -373,7 +382,7 @@ void CProxyGenerator::OnMouse(SPhysProxies* pProx, const SMouseEvent& ev, const 
 		static IGeometry* pRay = gEnv->pPhysicalWorld->GetGeomManager()->CreatePrimitive(primitives::ray::type, &ray);
 		pRay->SetData(&ray);
 		geom_contact* pcont;
-		m_hitShift += ev.type == SMouseEvent::PRESS && ev.button == 4; // use Mclick cycle hitShift
+		m_hitShift += ev.type == SMouseEvent::TYPE_PRESS && ev.button == 4; // use Mclick cycle hitShift
 		m_proxyIsland = -1;
 		if (int ncont = pProx->pSrc->pMesh->Intersect(pRay, 0, 0, 0, pcont))
 		{
@@ -393,14 +402,14 @@ void CProxyGenerator::OnMouse(SPhysProxies* pProx, const SMouseEvent& ev, const 
 					;
 				m_proxyIsland += isle - m_proxyIsland & ~(i >> 31);
 				m_hitShift &= ~(i >> 31);
-				if (ev.type == SMouseEvent::PRESS && ev.button == 1)
+				if (ev.type == SMouseEvent::TYPE_PRESS && ev.button == 1)
 				{
 					// toggle a mesh island's usage for proxygen
 					pProx->params.islandMap ^= 1ull << m_proxyIsland;
 					signalProxyIslandsChanged(pProx);
 				}
 			}
-			else if (ev.type == SMouseEvent::PRESS && ev.button == 1)
+			else if (ev.type == SMouseEvent::TYPE_PRESS && ev.button == 1 && m_voxelsShown)
 			{
 				// if proxies are ready, use Lclicks to toggle individual voxels to be used as vertices in proxy meshes
 				IGeometry::SProxifyParams params = pProx->params;
